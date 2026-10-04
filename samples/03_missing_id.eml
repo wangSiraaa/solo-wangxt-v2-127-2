@@ -1,0 +1,6 @@
+From: nobody@example.com
+Subject: Draft with no identity headers
+Date: Mon, 29 Sep 2026 07:00:00 +0000
+Content-Type: text/plain; charset="bogus-charset-99"
+
+unknown charset payload: hello ÿ world

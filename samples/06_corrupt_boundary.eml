@@ -1,0 +1,15 @@
+Message-ID: <corrupt-01@example.com>
+From: broken@example.com
+Subject: Broken multipart boundary
+Date: Tue, 30 Sep 2026 12:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="REAL"
+
+--REAL
+Content-Type: text/plain
+
+first part
+--WRONG-BOUNDARY
+Content-Type: text/plain
+
+orphaned part without proper close

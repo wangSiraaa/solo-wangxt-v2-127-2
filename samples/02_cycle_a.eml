@@ -1,0 +1,9 @@
+Message-ID: <cycle-a@example.com>
+References: <cycle-b@example.com> <cycle-c@example.com>
+In-Reply-To: <cycle-b@example.com>
+From: a@example.com
+Subject: Circular thread A
+Date: Mon, 29 Sep 2026 08:00:00 +0000
+Content-Type: text/plain
+
+A references B

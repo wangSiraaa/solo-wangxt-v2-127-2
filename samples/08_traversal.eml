@@ -1,0 +1,19 @@
+Message-ID: <trav-01@example.com>
+From: evil@example.com
+Subject: Path traversal attempt
+Date: Tue, 30 Sep 2026 13:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="T"
+
+--T
+Content-Type: text/plain
+
+see attachment
+--T
+Content-Type: application/octet-stream;
+ name*0="..%2f..%2f..%2f";
+ name*1="etc%2fcron.d%2fpwned"
+Content-Disposition: attachment; filename="../../../../etc/cron.d/pwned"
+
+malicious payload bytes
+--T--

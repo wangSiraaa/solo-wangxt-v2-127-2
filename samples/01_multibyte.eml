@@ -1,0 +1,56 @@
+Received: by mail.example.com; Tue, 30 Sep 2026 09:00:00 +0000
+Received: by edge.example.net; Tue, 30 Sep 2026 09:02:00 +0000
+Message-ID: <multi-01@example.com>
+In-Reply-To: <parent-01@example.com>
+References: <root-00@example.com> <parent-01@example.com>
+From: =?utf-8?b?6ICB546LIChKb3PDqSBMw7Z2csOldCDwn46JKQ==?= <sigs@example.com>
+To: =?gb18030?b?ob6148P7suGhvw==?= <cn@example.com>, =?iso-2022-jp?b?GyRCJUklPyVQJT8jWCVMGyhC?= <jp@example.com>
+Subject: =?utf-8?b?5aSa57yW56CB5rWL6K+VIOKAlCDDqc+Aw7w=?=
+Date: Tue, 30 Sep 2026 11:00:00 +0200
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="MIX"
+
+--MIX
+Content-Type: multipart/alternative; boundary="ALT"
+
+--ALT
+Content-Type: text/plain; charset=utf-8
+
+å¤šç¼–ç æ­£æ–‡ â€” UTF-8 body with Ã©mojis ğŸ“ cafÃ©.
+--ALT
+Content-Type: text/plain; charset=gb18030
+
+ÕâÊÇ GB18030 ±àÂëµÄÌæ´úÕıÎÄ¡£
+--ALT
+Content-Type: multipart/related; boundary="REL"; type="text/html"
+
+--REL
+Content-Type: text/html; charset=iso-8859-1
+
+<p>Caf&eacute; <img src=cid:banner1 alt=ok> <img src=http://tracker.example/beacon.png></p>
+--REL
+Content-Type: image/gif
+Content-ID: <banner1>
+Content-Disposition: inline; filename=banner.gif
+
+GIF89aFAKEGIFDATA
+--REL--
+--ALT--
+--MIX
+Content-Type: message/rfc822; name="forwarded.eml"
+Content-Disposition: inline
+
+Message-ID: <embedded-01@example.com>
+From: Forwarder <fwd@example.com>
+Subject: Forwarded nested
+Content-Type: text/plain; charset=shift_jis
+
+‚±‚ê‚Í–„‚ß‚İ“]‘—ƒƒbƒZ[ƒW‚Å‚·B
+
+--MIX
+Content-Type: application/pdf; name="=?utf-8?b?5paH5pysLnBkZg==?="
+Content-Disposition: attachment; filename="=?utf-8?b?5paH5pysLnBkZg==?="
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKZmFrZSBwZGYgY29udGVudCBieXRlcwo=
+--MIX--
