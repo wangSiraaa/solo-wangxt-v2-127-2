@@ -16,6 +16,7 @@ There is **no frontend** — JSON HTTP API only.
 | Inline resources | `multipart/related` / `Content-ID` parts are parsed as binary attachments with `content_id`; HTML parts record `referenced_cids` — links are facts, nothing is fetched. |
 | Attachment bytes in logs | Only metadata is logged (content type, size, sha256, relative path). A test asserts payload markers never appear in log records. |
 | Upload size | Hard streaming cap (`EMLARCH_MAX_UPLOAD_BYTES`) before persistence. |
+| Batch ZIP import | The compressed archive is capped (`EMLARCH_MAX_BATCH_BYTES`); member count (`EMLARCH_MAX_BATCH_FILES`) and total expanded bytes (`EMLARCH_MAX_BATCH_EXPANDED_BYTES`) are enforced from central-directory metadata **before** anything is inflated, and again with hard runtime caps while reading — decompression bombs are rejected. Each member must also fit the single-message cap. Members are inflated **in memory only**, never extracted to disk, so in-archive paths cannot write outside the storage roots; absolute/drive-letter/`..` names are rejected and reported. Only plain (regular-file, unencrypted, non-empty) `.eml` members are accepted. |
 | SQL | psycopg3 parameterized statements throughout; no string-built DML. |
 | File modes | Stored files default to `0600`. |
 
@@ -54,6 +55,7 @@ Implemented in `app/threads.py` (pure function, unit tested):
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/ingest` | multipart upload of one `.eml`; returns status, digest, parts, attachments, threading report |
+| POST | `/ingest/batch` | multipart upload of one offline `.zip` package; every plain `.eml` member is imported through the single-message pipeline. Returns one row per member (`ok`/`defective`/`failed`/`rejected`/`skipped`) with its ingest ID; one bad member never loses the others. In-archive paths are provenance labels only |
 | GET | `/messages` / `/messages/{id}` | list / full detail (tree, bodies, attachments, defects) |
 | GET | `/messages/{id}/attachments/{aid}/download` | stream attachment bytes (path re-validated) |
 | GET | `/search?q=` | substring over subject, Message-ID, all header values, body plain text |
@@ -78,6 +80,14 @@ export EMLARCH_RAW_DIR=/var/lib/emlarchive/raw
 The schema is applied automatically on startup (`app/sql/schema.sql`).
 Without a DSN the service boots an in-memory repository (useful for demos).
 
+Batch-import caps (defaults shown):
+
+```bash
+export EMLARCH_MAX_BATCH_BYTES=104857600          # compressed .zip upload cap
+export EMLARCH_MAX_BATCH_EXPANDED_BYTES=262144000 # sum of inflated .eml members
+export EMLARCH_MAX_BATCH_FILES=1000               # archive entries / .eml members
+```
+
 ### Generate boundary samples
 
 ```bash
@@ -91,7 +101,7 @@ ls samples/
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest                       # 47 unit + API tests (memory backend)
+.venv/bin/python -m pytest                       # 61 unit + API tests (memory backend)
 EMLARCH_RUN_PG_TESTS=1 EMLARCH_TEST_DSN='postgresql://postgres@/postgres?host=/tmp/pgsock&port=55432' \
   .venv/bin/python -m pytest                     # + real PostgreSQL integration tests
 ```
@@ -101,17 +111,22 @@ EMLARCH_RUN_PG_TESTS=1 EMLARCH_TEST_DSN='postgresql://postgres@/postgres?host=/t
 ```bash
 curl -F "file=@samples/01_multibyte.eml" http://127.0.0.1:8080/ingest
 curl "http://127.0.0.1:8080/search?q=GB18030"
+
+# batch: import an offline package of EMLs
+(cd samples && zip -q /tmp/bundle.zip 01_multibyte.eml 06_corrupt_boundary.eml)
+curl -F "file=@/tmp/bundle.zip" http://127.0.0.1:8080/ingest/batch
 ```
 
 ## Layout
 
 ```
 app/
-  config.py            env-driven configuration (roots, cap, DSN)
+  config.py            env-driven configuration (roots, caps, DSN)
   parser/
     eml_parser.py      stdlib email parsing, structural walk, charset ladder
     html_sanitizer.py  allow-list sanitizer + escaping + text extraction
     models.py          structured result dataclasses
+  batch.py             ZIP batch import (member policy, bomb/traversal guards)
   storage.py           ControlledStorage (path safety, 0600, metadata logs)
   threads.py           Message-ID graph + cycles + conflicts + weak subjects
   pg_repository.py     PostgreSQL persistence (psycopg3)

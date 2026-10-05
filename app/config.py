@@ -24,6 +24,13 @@ class Settings:
     raw_dir: Path
     max_upload_bytes: int
     file_mode: int
+    # Batch (ZIP) import caps. The compressed archive is capped by
+    # max_batch_bytes; expanded total and member count are enforced by
+    # app.batch. Each member must also fit the single-message cap
+    # (max_upload_bytes).
+    max_batch_bytes: int = 100 * 1024 * 1024
+    max_batch_expanded_bytes: int = 250 * 1024 * 1024
+    max_batch_files: int = 1000
 
     @staticmethod
     def load() -> "Settings":
@@ -40,6 +47,11 @@ class Settings:
             raw_dir=raw_dir,
             max_upload_bytes=int(_env("EMLARCH_MAX_UPLOAD_BYTES", str(50 * 1024 * 1024))),
             file_mode=file_mode,
+            max_batch_bytes=int(_env("EMLARCH_MAX_BATCH_BYTES", str(100 * 1024 * 1024))),
+            max_batch_expanded_bytes=int(
+                _env("EMLARCH_MAX_BATCH_EXPANDED_BYTES", str(250 * 1024 * 1024))
+            ),
+            max_batch_files=int(_env("EMLARCH_MAX_BATCH_FILES", "1000")),
         )
 
 

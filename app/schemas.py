@@ -42,6 +42,34 @@ class IngestResponse(BaseModel):
     threads: dict[str, Any] = Field(default_factory=dict)
 
 
+class BatchEntryOut(BaseModel):
+    """One archive member's outcome; ``name`` is the in-archive path and is
+    only a provenance label — it is never used as a filesystem path."""
+
+    name: str
+    status: str  # ok | defective | failed | rejected | skipped
+    declared_size: int | None = None
+    ingest_id: int | None = None
+    message_pk: int | None = None
+    raw_sha256: str | None = None
+    defects_count: int = 0
+    error: str | None = None
+
+
+class BatchImportResponse(BaseModel):
+    archive_name: str | None
+    archive_sha256: str
+    archive_size: int
+    members_total: int
+    ok: int
+    defective: int
+    failed: int
+    rejected: int
+    skipped: int
+    entries: list[BatchEntryOut]
+    threads: dict[str, Any] = Field(default_factory=dict)
+
+
 class MessageSummary(BaseModel):
     id: int
     ingest_id: int

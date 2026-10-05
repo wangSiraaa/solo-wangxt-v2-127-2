@@ -1,21 +1,26 @@
 """FastAPI application: ingest EML, inspect facts, download attachments.
 
-No frontend. The only request that accepts file bytes is ``POST /ingest`` and
-its size is bounded by an explicit streaming cap.
+No frontend. The only requests that accept file bytes are ``POST /ingest``
+(single message) and ``POST /ingest/batch`` (offline ZIP package); both are
+bounded by explicit streaming caps.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, Response
 
+from app.batch import BatchFormatError, BatchLimits, BatchLimitError
 from app.config import Settings, get_settings
 from app.memory_repository import MemoryRepository
 from app.pg_repository import PgRepository
 from app.repository import Repository
 from app.schemas import (
+    BatchEntryOut,
+    BatchImportResponse,
     FailureOut,
     Health,
     IngestDetail,
@@ -114,6 +119,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             defects_count=result.defects_count,
             fatal_error=result.fatal_error,
             attachments=result.attachments,
+            threads=result.threads,
+        )
+
+    @app.post(
+        "/ingest/batch",
+        response_model=BatchImportResponse,
+        status_code=201,
+        tags=["ingest"],
+    )
+    async def ingest_batch(request: Request, file: UploadFile | None = None) -> BatchImportResponse:
+        """Import an offline ZIP package of ``.eml`` files, one report row per member."""
+        st = get_state(request)
+        if file is None:
+            raise HTTPException(status_code=422, detail="multipart form field 'file' is required")
+        data = await _read_limited(file, st.settings.max_batch_bytes)
+        if not data:
+            raise HTTPException(status_code=422, detail="empty upload")
+        limits = BatchLimits(
+            max_files=st.settings.max_batch_files,
+            max_expanded_bytes=st.settings.max_batch_expanded_bytes,
+            max_member_bytes=st.settings.max_upload_bytes,
+        )
+        try:
+            result = st.service.ingest_batch(data, archive_name=file.filename, limits=limits)
+        except BatchFormatError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        except BatchLimitError as exc:
+            log.warning("batch archive rejected: %s (source=%r)", exc, file.filename)
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=str(exc)
+            )
+        counts = {"ok": 0, "defective": 0, "failed": 0, "rejected": 0, "skipped": 0}
+        for entry in result.entries:
+            counts[entry.status] = counts.get(entry.status, 0) + 1
+        return BatchImportResponse(
+            archive_name=file.filename,
+            archive_sha256=hashlib.sha256(data).hexdigest(),
+            archive_size=len(data),
+            members_total=result.members_total,
+            ok=counts["ok"],
+            defective=counts["defective"],
+            failed=counts["failed"],
+            rejected=counts["rejected"],
+            skipped=counts["skipped"],
+            entries=[BatchEntryOut(**vars(entry)) for entry in result.entries],
             threads=result.threads,
         )
 

@@ -2,9 +2,16 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
+from app.batch import (
+    ArchivePlan,
+    BatchLimits,
+    EmlMember,
+    MemberRejection,
+    log_safe_name,
+)
 from app.parser import ParseStatus, parse_eml
 from app.repository import Repository
 from app.storage import ControlledStorage
@@ -23,6 +30,27 @@ class IngestResult:
     fatal_error: str | None
     attachments: list[dict[str, Any]]
     threads: dict[str, Any]
+
+
+@dataclass
+class BatchEntryResult:
+    """Per-member outcome of a batch import (one row in the report)."""
+
+    name: str  # in-archive path — provenance label only
+    status: str  # ok | defective | failed | rejected | skipped
+    declared_size: int | None
+    ingest_id: int | None
+    message_pk: int | None
+    raw_sha256: str | None
+    defects_count: int
+    error: str | None
+
+
+@dataclass
+class BatchImportResult:
+    entries: list[BatchEntryResult] = field(default_factory=list)
+    members_total: int = 0
+    threads: dict[str, Any] = field(default_factory=dict)
 
 
 class IngestService:
@@ -114,3 +142,79 @@ class IngestService:
             attachments=att_summaries,
             threads=threads,
         )
+
+    def ingest_batch(
+        self, archive: bytes, *, archive_name: str | None, limits: BatchLimits
+    ) -> BatchImportResult:
+        """Import every acceptable ``.eml`` member of a ZIP archive.
+
+        Each member runs through the exact single-message pipeline (parse,
+        raw digest/storage, attachment storage, persistence). A member that
+        blows up is recorded as ``failed`` and the batch continues. Threads
+        are rebuilt once at the end via the same repository routine the
+        single ingest uses.
+        """
+        result = BatchImportResult()
+        saved_message = False
+        with ArchivePlan(archive, limits) as plan:
+            result.members_total = plan.members_total
+            for outcome in plan:
+                if isinstance(outcome, MemberRejection):
+                    log.info(
+                        "batch member %s: name=%r reason=%s",
+                        outcome.status,
+                        log_safe_name(outcome.name),
+                        outcome.reason,
+                    )
+                    result.entries.append(
+                        BatchEntryResult(
+                            name=outcome.name,
+                            status=outcome.status,
+                            declared_size=outcome.declared_size,
+                            ingest_id=None,
+                            message_pk=None,
+                            raw_sha256=None,
+                            defects_count=0,
+                            error=outcome.reason,
+                        )
+                    )
+                    continue
+                assert isinstance(outcome, EmlMember)
+                source = f"{archive_name}::{outcome.name}" if archive_name else outcome.name
+                try:
+                    one = self.ingest(outcome.data, source_name=source, recompute_threads=False)
+                except Exception as exc:  # one bad message must not lose the rest
+                    log.exception(
+                        "batch member ingest failed name=%r: %s",
+                        log_safe_name(outcome.name),
+                        exc,
+                    )
+                    result.entries.append(
+                        BatchEntryResult(
+                            name=outcome.name,
+                            status="failed",
+                            declared_size=len(outcome.data),
+                            ingest_id=None,
+                            message_pk=None,
+                            raw_sha256=None,
+                            defects_count=0,
+                            error=f"ingest error: {exc}",
+                        )
+                    )
+                    continue
+                saved_message = saved_message or one.message_pk is not None
+                result.entries.append(
+                    BatchEntryResult(
+                        name=outcome.name,
+                        status=one.status,
+                        declared_size=len(outcome.data),
+                        ingest_id=one.ingest_id,
+                        message_pk=one.message_pk,
+                        raw_sha256=one.raw_sha256,
+                        defects_count=one.defects_count,
+                        error=one.fatal_error,
+                    )
+                )
+        if saved_message:
+            result.threads = self._repo.rebuild_threads()
+        return result
