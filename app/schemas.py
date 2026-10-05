@@ -42,6 +42,33 @@ class IngestResponse(BaseModel):
     threads: dict[str, Any] = Field(default_factory=dict)
 
 
+class BatchItemResponse(BaseModel):
+    """One archive member's result; ``path`` is provenance text only."""
+
+    index: int
+    path: str
+    outcome: str  # ingested | rejected | error
+    ingest_id: int | None = None
+    message_pk: int | None = None
+    status: str | None = None
+    raw_sha256: str | None = None
+    raw_size: int | None = None
+    defects_count: int | None = None
+    fatal_error: str | None = None
+    error: str | None = None
+    attachments: list[AttachmentSummary] = Field(default_factory=list)
+
+
+class BatchIngestResponse(BaseModel):
+    package: str | None
+    total: int
+    ingested: int
+    rejected: int
+    errors: int
+    threads: dict[str, Any] = Field(default_factory=dict)
+    items: list[BatchItemResponse]
+
+
 class MessageSummary(BaseModel):
     id: int
     ingest_id: int

@@ -16,6 +16,7 @@ There is **no frontend** — JSON HTTP API only.
 | Inline resources | `multipart/related` / `Content-ID` parts are parsed as binary attachments with `content_id`; HTML parts record `referenced_cids` — links are facts, nothing is fetched. |
 | Attachment bytes in logs | Only metadata is logged (content type, size, sha256, relative path). A test asserts payload markers never appear in log records. |
 | Upload size | Hard streaming cap (`EMLARCH_MAX_UPLOAD_BYTES`) before persistence. |
+| ZIP batch import | `POST /ingest/batch` takes **one** ZIP and ingests only its regular `.eml` members. The central directory is validated **before** anything is persisted — `../`/absolute/UNC/control-byte paths, symlinks/special files, duplicate names, non-`.eml` members, encrypted/unknown-compression entries and zip-bomb shapes (entry count, declared total, inflated/compressed ratio) reject the whole package. Members are then inflated one at a time under real per-member (`EMLARCH_ZIP_MAX_MEMBER_BYTES`) and running-total (`EMLARCH_ZIP_MAX_TOTAL_BYTES`) counters, behind a streaming upload cap (`EMLARCH_ZIP_MAX_UPLOAD_BYTES`). Archive paths are report-only provenance (`package.zip!dir/mail.eml`); bytes still land through the content-addressed storage above, never at the archive path. One member failing (oversize, CRC/deflate error, defective/failed parse) never discards the others. |
 | SQL | psycopg3 parameterized statements throughout; no string-built DML. |
 | File modes | Stored files default to `0600`. |
 
@@ -54,6 +55,7 @@ Implemented in `app/threads.py` (pure function, unit tested):
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/ingest` | multipart upload of one `.eml`; returns status, digest, parts, attachments, threading report |
+| POST | `/ingest/batch` | multipart upload of one offline **ZIP** of `.eml` files; validates the whole package, then returns one result per member (`ingested`/`rejected`/`error` with ingest ID, status, digest, defect count). `?recompute_threads=false` defers the single end-of-batch thread rebuild. |
 | GET | `/messages` / `/messages/{id}` | list / full detail (tree, bodies, attachments, defects) |
 | GET | `/messages/{id}/attachments/{aid}/download` | stream attachment bytes (path re-validated) |
 | GET | `/search?q=` | substring over subject, Message-ID, all header values, body plain text |
@@ -91,7 +93,7 @@ ls samples/
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest                       # 47 unit + API tests (memory backend)
+.venv/bin/python -m pytest                       # 90+ unit + API tests (memory backend)
 EMLARCH_RUN_PG_TESTS=1 EMLARCH_TEST_DSN='postgresql://postgres@/postgres?host=/tmp/pgsock&port=55432' \
   .venv/bin/python -m pytest                     # + real PostgreSQL integration tests
 ```
@@ -101,6 +103,11 @@ EMLARCH_RUN_PG_TESTS=1 EMLARCH_TEST_DSN='postgresql://postgres@/postgres?host=/t
 ```bash
 curl -F "file=@samples/01_multibyte.eml" http://127.0.0.1:8080/ingest
 curl "http://127.0.0.1:8080/search?q=GB18030"
+
+# offline package: one ZIP with only .eml members
+zip -j incoming.zip samples/01_multibyte.eml samples/06_corrupt_boundary.eml
+curl -F "file=@incoming.zip" http://127.0.0.1:8080/ingest/batch
+# -> {total, ingested, rejected, errors, items:[{index, path, outcome, ingest_id, ...}]}
 ```
 
 ## Layout
@@ -113,6 +120,7 @@ app/
     html_sanitizer.py  allow-list sanitizer + escaping + text extraction
     models.py          structured result dataclasses
   storage.py           ControlledStorage (path safety, 0600, metadata logs)
+  batch.py             controlled ZIP planning/guarded inflation for /ingest/batch
   threads.py           Message-ID graph + cycles + conflicts + weak subjects
   pg_repository.py     PostgreSQL persistence (psycopg3)
   memory_repository.py same interface, in-memory (tests / demo)

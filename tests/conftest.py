@@ -18,14 +18,22 @@ PG_DSN = os.environ.get(
 )
 
 
-def _settings(tmp_path: Path, dsn: str | None) -> Settings:
-    return Settings(
+def _settings(tmp_path: Path, dsn: str | None, **overrides) -> Settings:
+    defaults = dict(
         database_dsn=dsn,
         attachment_dir=(tmp_path / "attachments").resolve(),
         raw_dir=(tmp_path / "raw").resolve(),
         max_upload_bytes=10 * 1024 * 1024,
         file_mode=0o600,
+        zip_max_upload_bytes=10 * 1024 * 1024,
+        zip_max_entries=200,
+        zip_max_eml=100,
+        zip_max_total_bytes=2 * 1024 * 1024,
+        zip_max_member_bytes=1024 * 1024,
+        zip_max_compression_ratio=20,
     )
+    defaults.update(overrides)
+    return Settings(**defaults)
 
 
 @pytest.fixture

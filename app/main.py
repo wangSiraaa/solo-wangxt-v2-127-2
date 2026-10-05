@@ -1,7 +1,8 @@
 """FastAPI application: ingest EML, inspect facts, download attachments.
 
-No frontend. The only request that accepts file bytes is ``POST /ingest`` and
-its size is bounded by an explicit streaming cap.
+No frontend. The requests that accept file bytes are ``POST /ingest`` (one
+``.eml``) and ``POST /ingest/batch`` (one controlled ZIP of ``.eml`` files);
+both are bounded by explicit streaming caps.
 """
 from __future__ import annotations
 
@@ -12,10 +13,13 @@ from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, Response
 
 from app.config import Settings, get_settings
+from app.batch import BundleError, BundleLimits
 from app.memory_repository import MemoryRepository
 from app.pg_repository import PgRepository
 from app.repository import Repository
 from app.schemas import (
+    BatchIngestResponse,
+    BatchItemResponse,
     FailureOut,
     Health,
     IngestDetail,
@@ -82,6 +86,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     detail=f"upload exceeds maximum of {limit} bytes",
                 )
         return bytes(buf)
+
+    # ---- batch ingest (offline ZIP package) ------------------------------
+    @app.post(
+        "/ingest/batch",
+        response_model=BatchIngestResponse,
+        status_code=200,
+        tags=["ingest"],
+    )
+    async def ingest_batch(
+        request: Request,
+        file: UploadFile | None = None,
+        recompute_threads: bool = True,
+    ) -> BatchIngestResponse:
+        st = get_state(request)
+        if file is None:
+            raise HTTPException(status_code=422, detail="multipart form field 'file' is required")
+        data = await _read_limited(file, st.settings.zip_max_upload_bytes)
+        if not data:
+            raise HTTPException(status_code=422, detail="empty upload")
+        try:
+            result = st.service.ingest_zip(
+                data,
+                package_name=file.filename,
+                limits=BundleLimits.from_settings(st.settings),
+                recompute_threads=recompute_threads,
+            )
+        except BundleError as exc:
+            # Whole-package rejection: traversal, non-.eml members, zip bomb,
+            # corrupt archive. Nothing has been persisted.
+            log.warning("batch package rejected source=%r: %s", file.filename, exc.detail)
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+        except Exception as exc:  # pragma: no cover - defensive
+            log.exception("batch ingest failed: %s", exc)
+            raise HTTPException(status_code=500, detail="internal batch failure")
+        return BatchIngestResponse(
+            package=result.package,
+            total=result.total,
+            ingested=result.ingested,
+            rejected=result.rejected,
+            errors=result.errors,
+            threads=result.threads,
+            items=[BatchItemResponse(**vars(item)) for item in result.items],
+        )
 
     # ---- ingest ----------------------------------------------------------
     @app.post("/ingest", response_model=IngestResponse, status_code=201, tags=["ingest"])

@@ -4,6 +4,9 @@ These run only when EMLARCH_RUN_PG_TESTS=1 and the test DSN is reachable.
 They re-ingest representative samples and exercise SQL that has no in-memory
 equivalent (JSONB aggregates, LATERAL identifier rollups, ILIKE joins).
 """
+import io
+import zipfile
+
 import pytest
 
 from conftest import SAMPLES
@@ -18,6 +21,14 @@ def _post(c, name, **params):
         files={"file": (name, data, "message/rfc822")},
         params=params,
     )
+
+
+def _zip(files: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, payload in files.items():
+            zf.writestr(name, payload)
+    return buf.getvalue()
 
 
 def test_health_reports_pg(pg_client):
@@ -96,3 +107,40 @@ def test_idempotent_schema_init(pg_client):
     # creating a second repository over the same DSN must not error on DDL
     arch.repo.init_schema()
     assert c.get("/health").status_code == 200
+
+
+def test_batch_zip_roundtrip_and_denials_pg(pg_client):
+    c, _ = pg_client
+    good = (SAMPLES / "01_multibyte.eml").read_bytes()
+    broken = (SAMPLES / "06_corrupt_boundary.eml").read_bytes()
+    pkg = _zip({"incoming/good.eml": good, "incoming/broken.eml": broken,
+                "incoming/dup.eml": good})
+    r = c.post(
+        "/ingest/batch",
+        files={"file": ("bundle.zip", pkg, "application/zip")},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ingested"] == 3 and body["rejected"] == 0
+
+    # each item is traceable through the real ingests table
+    for item in body["items"]:
+        detail = c.get(f"/ingests/{item['ingest_id']}").json()
+        assert detail["source_name"].endswith(item["path"])
+        assert detail["raw_sha256"] == item["raw_sha256"]
+
+    # search and attachment download still work after batch import
+    assert c.get("/search", params={"q": "multi-01"}).json()["count"] == 2
+    pk = body["items"][0]["message_pk"]
+    meta = c.get(f"/messages/{pk}").json()["attachments"]
+    pdf = next(a for a in meta if a["content_type"] == "application/pdf")
+    dl = c.get(f"/messages/{pk}/attachments/{pdf['id']}/download")
+    assert dl.status_code == 200 and dl.content.startswith(b"%PDF")
+
+    # traversal rejected before persistence against the real backend too
+    evil = _zip({"../escape.eml": good})
+    denied = c.post(
+        "/ingest/batch",
+        files={"file": ("evil.zip", evil, "application/zip")},
+    )
+    assert denied.status_code == 422
